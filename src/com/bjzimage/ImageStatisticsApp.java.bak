@@ -1,0 +1,139 @@
+package com.bjzimage;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+//import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+
+public class ImageStatisticsApp{
+	
+	public static ExecutorService executorServReadUrl = null;
+	public static ExecutorService executorServDwnLdImage = null;
+	public static ExecutorService executorServProcImage = null;
+	public static ExecutorService executorServCsvWriter = null;
+
+	public static void main(String[] args) throws InterruptedException {
+		//one input URL file, can be changed to more than one
+		String urlfilePath = "/home/hadoop/eclipse-workspace/BjZhPayImage/bin/com/bjzimage/urls-PEX01.txt";
+		//one output file, can be changed to more than one
+		String csvFilePath = "/home/hadoop/prevalentColors.csv";
+		
+		/*
+		ExecutorService executorServReadUrl = null;
+		ExecutorService executorServDwnLdImage = null;
+		ExecutorService executorServProcImage = null;
+		ExecutorService executorServCsvWriter = null;
+		*/
+		
+		try {
+			//populate the URL reader thread pool
+			//if multiple URL files then the Thread Pool will be more than 1, 
+			//depending the system resources
+			executorServReadUrl = Executors.newFixedThreadPool(1);
+			//the capacity 5 can be changed too
+			BlockingQueue<URL> urlQueue = new ArrayBlockingQueue<>(5);
+			FutureTask<Integer> futsServReadUrl = new FutureTask<>(new ReadParseUrlThread(urlQueue, urlfilePath));
+			executorServReadUrl.execute(futsServReadUrl);
+			
+			//Future<Integer> futsServReadUrl = executorServReadUrl.submit(new ReadParseUrlThread(urlQueue, urlfilePath));
+			//populate the BufferedImage reader thread pool
+			//Across network Getting Images may be slow so we use Thread Pool 2, 
+			//depending the system resources
+			executorServDwnLdImage = Executors.newFixedThreadPool(2); 
+			ArrayList<FutureTask<Integer>> imageReaderFutures = new ArrayList<>();
+			//the capacity 5 can be changed too
+			BlockingQueue<UrlImagePair> imageQueue = new ArrayBlockingQueue<>(5);
+			FutureTask<Integer> futureReadImage01 = new FutureTask<>(new ReadUrlImageThread(imageQueue, urlQueue, futsServReadUrl));
+			FutureTask<Integer> futureReadImage02 = new FutureTask<>(new ReadUrlImageThread(imageQueue, urlQueue, futsServReadUrl));
+			imageReaderFutures.add(futureReadImage01);
+			imageReaderFutures.add(futureReadImage02);
+			executorServDwnLdImage.execute(futureReadImage01);
+			executorServDwnLdImage.execute(futureReadImage02);
+			
+			/*
+			imageReaderFutures.add(executorServDwnLdImage.submit(
+					new ReadUrlImageThread(imageQueue, urlQueue, futsServReadUrl)));
+			imageReaderFutures.add(executorServDwnLdImage.submit(
+					new ReadUrlImageThread(imageQueue, urlQueue, futsServReadUrl)));
+			*/
+			
+			//populate the Process Image thread pool
+			//The image processing is a heavy calculation task so we use Thread Pool 2, 
+			//depending the system resources
+			executorServProcImage = Executors.newFixedThreadPool(2); 
+			ArrayList<FutureTask<Integer>> imageProcFutures = new ArrayList<>();
+			//the capacity 5 can be changed too
+			BlockingQueue<Url3PrevColorPair> resultQueue = new ArrayBlockingQueue<>(5);
+			FutureTask<Integer> futureProcImage01 = new FutureTask<>(new ProcessImageThread(imageQueue, imageReaderFutures, resultQueue));
+			FutureTask<Integer> futureProcImage02 = new FutureTask<>(new ProcessImageThread(imageQueue, imageReaderFutures, resultQueue));
+			imageProcFutures.add(futureProcImage01);
+			imageProcFutures.add(futureProcImage02);
+			executorServProcImage.execute(futureProcImage01);
+			executorServProcImage.execute(futureProcImage02);
+			
+			/*
+			imageProcFutures.add(executorServProcImage.submit(
+					new ProcessImageThread(imageQueue, imageReaderFutures, resultQueue)));
+			imageProcFutures.add(executorServProcImage.submit(
+					new ProcessImageThread(imageQueue, imageReaderFutures, resultQueue)));
+			*/
+			
+			//populate the CSV Write thread pool
+			//The number of threads is usually the same as ReadParseUrlThread pool
+			//depending the system resources
+			executorServCsvWriter = Executors.newFixedThreadPool(1); 
+			FutureTask<Integer> futureWriteCsv = new FutureTask<>(new CsvWriterThread(csvFilePath, resultQueue, imageProcFutures));
+			executorServCsvWriter.execute(futureWriteCsv);
+			//executorServCsvWriter.submit(
+			//new CsvWriterThread(csvFilePath, resultQueue, imageProcFutures));
+			
+			//wait until the read URL thread is done
+			Integer val = futsServReadUrl.get();
+			System.out.println("Integer value from the URL reading thread = " + val);
+			executorServReadUrl.shutdown();
+			executorServReadUrl.awaitTermination(20, TimeUnit.SECONDS);
+			
+			Thread.sleep(30000); //sleep for 30 seconds
+			futureReadImage01.cancel(true);  //interrupt it if waiting
+			futureReadImage02.cancel(true);  //interrupt it if waiting
+			executorServDwnLdImage.shutdown();
+			executorServDwnLdImage.awaitTermination(40, TimeUnit.SECONDS);
+			
+			Thread.sleep(60000); //sleep for one minute
+			futureProcImage01.cancel(true);  //interrupt it if waiting
+			futureProcImage02.cancel(true);  //interrupt it if waiting
+			executorServProcImage.shutdown();
+			executorServProcImage.awaitTermination(30, TimeUnit.SECONDS);
+			
+			Thread.sleep(60000); //sleep for one minute
+			futureWriteCsv.cancel(true);  //interrupt it if waiting
+			executorServCsvWriter.shutdown();
+			executorServCsvWriter.awaitTermination(20, TimeUnit.SECONDS);
+			
+			
+		} catch (Exception ex) {
+			ex.printStackTrace();
+			if(executorServReadUrl != null) {
+				executorServReadUrl.shutdown();
+				executorServReadUrl.awaitTermination(10, TimeUnit.SECONDS);
+			}
+			if(executorServDwnLdImage != null) {
+				executorServDwnLdImage.shutdown();
+				executorServDwnLdImage.awaitTermination(40, TimeUnit.SECONDS);
+			}
+			if(executorServProcImage != null) {
+				executorServProcImage.shutdown();
+				executorServProcImage.awaitTermination(30, TimeUnit.SECONDS);
+			}
+			if(executorServCsvWriter != null) {
+				executorServCsvWriter.shutdown();
+				executorServCsvWriter.awaitTermination(20, TimeUnit.SECONDS);
+			}
+		}
+	}
+}
+
