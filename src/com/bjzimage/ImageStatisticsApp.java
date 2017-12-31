@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit;
  * 		ArrayList<String> urlInputFiles = new ArrayList<>();  //stores all url input file paths
  *		ArrayList<String> csvOutputFiles = new ArrayList<>(); //stores all csv output file paths
  * Usually the input and output are of one-one relationship. It can be changed with slightly modification but
- * relatives rules have to be defined (mapping = ?). 
+ * relative rules have to be defined (mapping = ?). 
  * The following variables can be adjusted according to the system resources and networking speed.
  * 		//the capacity of the blocking queue between URL file Reader and Image fetches
  *		int capacityOfUrlBlockingQueue = 5; 
@@ -46,14 +46,16 @@ public class ImageStatisticsApp{
 	
 	//executor service thread pool for the reading images
 	private ExecutorService executorServDwnLdImage = null;
-	//image readers accross network
+	//the blocking queue between Image Fetch and Image Processors
 	private BlockingQueue<UrlImagePair> imageQueue = null;
+	//image readers accross network
 	private ArrayList<FutureTask<Integer>> imageReaderFutures = null;
 	
 	//executor service thread pool for the processing images
 	private ExecutorService executorServProcImage = null;
-	//image process threads
+	//the blocking queue between image processors and CSV writer
 	private BlockingQueue<Url3PrevColorPair> resultQueue = null;
+	//image process threads
 	private ArrayList<FutureTask<Integer>> imageProcFutures = null;
 	
 	//executor service thread pool for the writing csv files
@@ -113,18 +115,18 @@ public class ImageStatisticsApp{
 						int numberOfImageProcessers) throws InterruptedException, ExecutionException {
 		try {
 			//one url file one read thread
-			//5 = capacity of the Blocking Queue, changeable
+			//capacityOfUrlBlockingQueue = capacity of the Blocking Queue, changeable
 			populateURLReadersAndExec(urlfilePath, capacityOfUrlBlockingQueue);
 			
-			//2 threads for image fetching for each url file, 
-			//8 = capacity of the Blocking Queue, changeable.
+			//numberOfImageReaders threads for image fetching for each url file, 
+			//capacityOfImageBlockingQueue = capacity of the Blocking Queue, changeable.
 			populateImageReadersAndExec(numberOfImageReaders, capacityOfImageBlockingQueue); 
 			//we have two threads putting and three threads taking
 			
 			//The image processing is a heavy calculation task so we use Thread Pool of 3, 
 			//depending the system resources
-			//3 threads totally for image processing 
-			//8 = capacity of the Blocking Queue, changeable.
+			//numberOfImageProcessers threads totally for image processing 
+			//capacityOfResultBlockingQueu = capacity of the Blocking Queue, changeable.
 			populateImageProcessesAndExec(numberOfImageProcessers, capacityOfResultBlockingQueu);
 			//we have 3 threads putting and 1 threading taking
 			
@@ -169,7 +171,7 @@ public class ImageStatisticsApp{
 			executorServDwnLdImage.shutdown();
 			executorServDwnLdImage.awaitTermination(40, TimeUnit.SECONDS);
 		}
-		if(! imageQueue.isEmpty()) {
+		while(! imageQueue.isEmpty()) {
 			Thread.sleep(capacityOfImageBlockingQueue*700); //sleep for several seconds
 		}
 		Thread.sleep(20000); //sleep for 10 seconds
@@ -182,7 +184,7 @@ public class ImageStatisticsApp{
 			executorServProcImage.shutdown();
 			executorServProcImage.awaitTermination(30, TimeUnit.SECONDS);
 		}
-		if(! resultQueue.isEmpty()) {
+		while(! resultQueue.isEmpty()) {
 			Thread.sleep(capacityOfResultBlockingQueue*500); //sleep for several seconds
 		}
 		Thread.sleep(10000); //sleep for 10 seconds
